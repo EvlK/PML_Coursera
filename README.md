@@ -1,2 +1,1 @@
-# PML_Coursera
-project website
+This repository contains Practical Machine Learning Course Project. To see it please switch from master branch to the gh-pages branch or check the link https://evlk.github.io/PML_Coursera/PML_Course_Project.html
