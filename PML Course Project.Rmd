@@ -1,0 +1,182 @@
+---
+title: "PML Course Project"
+author: "K"
+date: "December 21, 2016"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Introduction
+The aim of this project is to build a model to be able to predict the quality of the exercise. The data used is a weight lifting exercise dataset, it was obtained from website http://groupware.les.inf.puc-rio.br/har. This website also provides detailed description about the original study.
+The exercise data was collected after six participants were asked to perform one set of 10 repetitions of the unilateral dumbbell biceps curl in five different ways: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). The movement of the body parts during the exercise was recorded with accelerometers placed on the belt, forearm, arm, and dumbbell. We will use this movement data to predict the quality (class) of the exercise. 
+
+##Data Analysis
+
+R libraries required for this project are:
+```{r libraries, include=TRUE, warning=FALSE, message=FALSE}
+library(caret)
+library(kernlab)
+library(rpart)
+```
+
+We start with two datasets:
+
+.	Training (downloaded from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+.	Testing (downloaded from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+```{r download_and_read_data,cache=TRUE}
+##download data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml_training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml_testing.csv")
+#read data
+training<-read.csv("pml_training.csv")
+testing<-read.csv("pml_testing.csv")
+#show data dimensions
+dim(training)
+dim(testing)
+```
+
+The data sets have 160 variables. Many of the columns in the data sets have no values recorded. The last variable in the training data set is the class - the variable that we will be predicting. There are 19622 observations in the training data set and 20 in the testing data set. We will make the predictions for all 20 observations in the testing data set.
+
+Since we will be making predictions for the testing data set, for modelling purposes we will only use variables that have values in the testing data set. After excluding variables without values and time stamp and window number variables, we are left with the 54 variables which we will use for the model building.
+
+```{r data_processing}
+#create a variable with columns to include in modeling by gettting rid of those with NA values
+useColumns<-as.logical(!is.na(testing[1,]))
+#create a new data sets with only selected columns
+trainData<-training[,useColumns]
+testData<-testing[,useColumns]
+#exclude index, time stamp and window columns
+trainData<-trainData[,-c(1,3:7)]
+testData<-testData[,-c(1,3:7)]
+dim(trainData)
+dim(testData)
+```
+
+##Modeling
+
+We will use the trainData dataset to build our models and test them. So the next step is to split this data into further 2 datasets - one with the 75% observations to build the model on and the remaining 25% to test the model. The data split will be done using caret package's createDataPartition function.
+
+```{r data_split}  
+#set seed for the reproducability purposes
+set.seed(1234)
+#split training data set into the training and testing
+inTrain<-createDataPartition(y=trainData$classe,p=0.75,list=FALSE)
+trainData_train<-trainData[inTrain,]
+trainData_test<-trainData[-inTrain,]
+```
+
+Now we will try to fit couple of models and see how accurate they are. In each model training we will use 5-fold cross validation (trControl parameter in the train function).
+Then we will use the model to make the prediction on the testing data set and calculate the confusion matrix. The confusion matrix will provide us with the out of sample error rate - we will use Accuracy as out of sample error measure.
+
+Lets start with Linear Discriminant Analysis (lda) model:
+
+```{r lda_model, warning=FALSE, message=FALSE}
+#fit model
+modelFit_lda<-train(x=trainData_train[,c(-1,-54)],y=trainData_train$classe,method="lda", trControl = trainControl(method = "cv", number = 5))
+#make prediction on the test data set and report the confusion matrix
+CM<-confusionMatrix(trainData_test$classe,predict(modelFit_lda,trainData_test[,c(-1,-54)]))
+CM$overall["Accuracy"]
+CM$table
+```
+
+The acurracy for this model is ```r round(CM$overall["Accuracy"],digits=3)``` which is not a bad start. Lets see if we can get similar result adding the principal component analysis:
+
+```{r lda_model_w_pca}
+#fit model
+modelFit_lda_pc<-train(x=trainData_train[,c(-1,-54)],y=trainData_train$classe,method="lda",preProcess = "pca", trControl = trainControl(method = "cv", number = 5))
+#make prediction on the test data set and report the confusion matrix
+CM<-confusionMatrix(trainData_test$classe,predict(modelFit_lda_pc,trainData_test[,c(-1,-54)]))
+CM$overall["Accuracy"]
+```
+
+The model acurracy is ```r round(CM$overall["Accuracy"],digits=3)``` which is significantly lower than that of the previous model.
+
+Lets see what results we get with Classification and regression trees (rpart) model:
+
+```{r rpart_model}
+#fit model
+modelFit_rpart<-train(x=trainData_train[,c(-54)],y=trainData_train$classe,method="rpart", trControl = trainControl(method = "cv", number = 5))
+#make prediction on the test data set and report the confusion matrix
+CM<-confusionMatrix(trainData_test$classe,predict(modelFit_rpart,trainData_test[,c(-54)]))
+CM$overall["Accuracy"]
+```
+
+The model acurracy is ```r round(CM$overall["Accuracy"],digits=3)``` which again is significantly lower than that of the first model.
+
+So far our first model is providing with the best accuracy. Lets see if we can improve it further. The original purpose of the trial was to predict how well any person performs given exercise. However for our forecasting purposes we can check if the way the exercise is performed is a person specific by fitting a model for each person. Lets create a model specifically to Jeremy (the data investigation shows that there are 3 columns that contains no values for jeremy and another 3 columns that contain no values for adelmo - we will exclude them in the process):
+
+```{r lda_model_jeremy}
+#create a jeremy specific data set
+jeremy_train<-trainData_train[trainData_train$user_name=="jeremy",]
+jeremy_test<-trainData_test[trainData_test$user_name=="jeremy",]
+#fit model
+modelFit_jeremy<-train(x=jeremy_train[,c(-1,-15,-16,-17,-54)],y=jeremy_train$classe,method="lda",trControl = trainControl(method = "cv", number = 5))
+#make prediction on the test data set and report the confusion matrix
+CM<-confusionMatrix(jeremy_test$classe,predict(modelFit_jeremy,jeremy_test[,c(-1,-15,-16,-17,-54)]))
+CM$overall["Accuracy"]
+```
+
+The results look a lot better meaning that in the study who performes the given exercise makes a difference. So we will proceed with fitting a model for each person (we have enough data for this aproach):
+
+```{r lda_model_for_each_participant}
+participants<-levels(trainData_train$user_name)
+modelList<-list()
+exclColumnList<-list()
+testDataClasseList<-list()
+testDataInputList<-list()
+set.seed(1234)
+
+for (i in 1:length(participants)){
+      
+      pData<-trainData[trainData$user_name==participants[i],]
+      #split training data set into the training and testing
+      inTrain<-createDataPartition(y=pData$classe,p=0.75,list=FALSE)
+      pTrainData<-pData[inTrain,]
+      pTestData<-pData[-inTrain,]
+      dim(pTrainData)
+      dim(pTestData)
+      
+      #columns to exclude from the model building
+      if (participants[i]=="jeremy") {
+            exlColumns<-c(-1,-15,-16,-17,-54)
+      } else if (participants[i]=="adelmo"){
+            exlColumns<-c(-1,-41,-42,-43,-54)
+      } else exlColumns<-c(-1,-54)
+      
+      exclColumnList[[i]]<-exlColumns
+      #fit model
+      modelFit<-train(x=pTrainData[,exlColumns],y=pTrainData$classe,method="lda",trControl = trainControl(method = "cv", number = 5))
+      modelList[[i]]<-modelFit
+      #make prediction on the test data set and report the confusion matrix
+      CM<-confusionMatrix(pTestData$classe,predict(modelFit,pTestData[,c(exlColumns)]))
+      testDataClasseList[[i]]<-pTestData$classe
+      testDataInputList[[i]]<-pTestData[,c(exlColumns)]
+      print(participants[i])
+      print(CM$overall["Accuracy"])
+      cat('\n')
+}
+```
+
+The accuracy numbers for each of the model look very promissing. We continue by making forecast for the 20 cases in the test data:
+
+```{r predict_test_data}
+for (i in 1:nrow(testData)){
+      #print(i)
+      participant<-as.character(testData$user_name[i])
+      modelNo<-match(participant,participants)
+      forecastInput<-testData[i,exclColumnList[[modelNo]]]
+      predictClasse<-predict(modelList[[modelNo]],forecastInput)
+      #print(as.character(predictClasse))
+      #cat('\n')
+}
+```
+
+##Conclusions
+
+The course project quiz results show that the selected modeling strategy provided with 95% prediction accuracy which is indeed quite a satisfactory result.
+
